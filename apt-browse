@@ -1,0 +1,177 @@
+#!/usr/bin/env python
+
+import gtk, webkit
+import requests
+import urllib
+import os
+import sys
+from bs4 import BeautifulSoup
+from gtk import gdk
+import numpy as np
+import platform
+import time
+
+class AptBrowser:
+    def __init__(self):
+        
+        distro = platform.linux_distribution()
+        print(distro[0])
+        if distro[0] != "debian":
+            print('Sorry, Debian Linux only. ')
+            exit()
+        
+        self.window = gtk.Window()
+        self.hbox = gtk.HBox()
+        self.vbox = gtk.VBox()
+        self.scroller = gtk.ScrolledWindow()
+        self.browser = webkit.WebView()
+        self.entry = gtk.Entry()
+        self.entry.connect("key-release-event",self.entryCommandOutputs)
+        self.button = gtk.Button('Search')
+        
+        self.window.set_title('Apt-Browse')
+        self.window.set_size_request(1200, 600)
+        
+        self.window.add(self.vbox)
+        self.scroller.add(self.browser)
+        self.hbox.pack_start(self.entry)
+        self.hbox.pack_start(self.button, False)
+        self.vbox.pack_start(self.hbox, False)
+        self.vbox.pack_start(self.scroller)
+        
+        self.browser.connect("notify::title", self.window_title_change)
+            
+        #browser.open('https://screenshots.debian.net/packages/list?search=file+manager&show=with')    
+        self.browser.open('file:///' + os.getcwd() + '/welcome.html')      
+
+        self.window.connect('destroy', lambda w: gtk.main_quit())
+        self.button.connect('clicked', self.clicked_button)
+        self.window.show_all()
+        gtk.main()
+
+
+    def entryCommandOutputs(self,widget,keyEvent,data=None):
+        if keyEvent.keyval == gtk.keysyms.Return:
+            url_toopen = self.entry.get_text()
+            url_toopen = url_toopen.replace(" ","+")
+            print "Opening: " + url_toopen
+            self.get_packages(url_toopen)
+            self.browser.open('file:///' + os.getcwd() + '/tmp.html')
+    
+    
+    def scrape_page(self,search, pagenr):
+        response = requests.get( 'https://screenshots.debian.net/packages/list?page=' + str(pagenr) + '&search=' + search + '&show=with' )
+        body = (response.text)
+        if "Sorry. I couldn't find any software package like that." in body:
+            return [],[],[]
+    
+        body = body[body.index("row packagepage"):]
+        body = body[body.index("<"):]
+        body = body[:body.index("small-3 medium-2 columns")]
+        
+        
+        body = body.replace("/screenshots/","https://screenshots.debian.net/screenshots/")
+        body = "<link rel=\"stylesheet\" media=\"all\" href=\"https://screenshots.debian.net/assets/application-ad242fd2276104e826a13e4f17667ab2908de3f0f927c5d0419b4bd779c3d745.css\" />" + body
+        body = "<script src=\"/assets/application-4a887553cfd9011930a7b65801d4006458ad860fc530a405b3b5b798e30ec651.js\"></script>" + body
+        body = body.replace("row listview\"","row listview\" style=\"border-top: 1px solid black; padding-top: 5px; padding-bottom: 5px;\"")
+        body = body.replace("> </div><a", "</div><a")
+        
+        # remove page navigation
+        body = body[:body.index("<div class=\"show-for-large")]
+    
+        images = []
+        page = BeautifulSoup(body, "html.parser")
+        imageTags = page.findAll('img')
+        for image in imageTags:
+            url = image.get('src')
+            images.append(url)
+            
+        # pkgname
+        titles = []
+        tmp = page.findAll("div", {"class": "pkgname"})    
+        for title in tmp:
+             titles.append( title.get_text() )
+             
+        # details
+        details = []
+        tmp = page.findAll("div", {"class": "row packagedetails"})    
+        for item in tmp:
+             details.append( item.get_text() )
+             
+        return images, titles, details
+        
+    def get_packages(self,search):
+                    
+        images = []
+        titles = []
+        details = []
+        
+        for j in range(1,4):
+            i,t,d = self.scrape_page(search,j)
+            images = np.concatenate([images,i])
+            titles = np.concatenate([titles,t])
+            details = np.concatenate([details,d])
+        
+        
+        body = ''
+    
+        body = body + '<link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.7/css/bootstrap.min.css">'
+        body = body + '<script src="https://ajax.googleapis.com/ajax/libs/jquery/3.1.1/jquery.min.js"></script>'
+        body = body + '<script src="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.7/js/bootstrap.min.js"></script>'
+        body = body + '<link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.2/css/bootstrap-theme.min.css">'
+        body = body + '<div class="container">'
+        
+        body = body + '<table class="table">'
+        for i in range(0,len(images)):
+            body = body + '<tr>'
+            body = body + '<td>'
+            body = body + '<h1>' + titles[i] + '</h1>'            
+            body = body + details[i]       
+            body = body + '<br /><br /><a href="javascript:document.title=\'msgtopython:::install ' + titles[i] + '\'"><button type="button" class="btn btn-primary btn-lg"><span class="glyphicon glyphicon-download-alt"></span> Install</button></a>'
+            body = body + ' <a href="' + images[i] + '"><button type="button" class="btn btn-primary btn-lg"><span class="glyphicon glyphicon-camera"></span> Screenshot</button></a>'
+            body = body + ' <a href="javascript:document.title=\'msgtopython:::play ' + titles[i] + '\'"><button type="button" class="btn btn-primary btn-lg"><span class="glyphicon glyphicon glyphicon-film"></span> Video</button></a>'
+            body = body + '</td><td>'
+            body = body + '<br /><img src="' + images[i] + '" width="400px">'            
+            body = body + '</td>'
+            body = body + '</tr>'          
+        body = body + "</table>"
+        body = body + '</div>'
+        
+        with open('tmp.html', 'w') as file:
+            file.write(body)
+        
+    
+    def clicked_button(self,button):
+        
+        url_toopen = self.entry.get_text()
+        url_toopen = url_toopen.replace(" ","+")
+        print "Opening: " + url_toopen
+        #browser.open( 'https://screenshots.debian.net/packages/list?search=' + url_toopen + '&show=with' )
+         
+        self.get_packages(url_toopen)
+        self.browser.open('file:///' + os.getcwd() + '/tmp.html')
+    
+    
+    def window_title_change(self,v, param):
+        if not v.get_title():
+            return
+        if v.get_title().startswith("msgtopython:::"):
+            message = v.get_title()
+            print(message)
+    
+            sets = message.split(" ")
+            print(sets[1])
+            
+            if "install " in message:
+                os.system("gksu apt-get install " + sets[1])
+    
+            if "play " in message:
+                os.system("./apt-play " + sets[1])
+            return
+
+
+def main():
+    b = AptBrowser()
+    
+if __name__ == "__main__":
+    main()
